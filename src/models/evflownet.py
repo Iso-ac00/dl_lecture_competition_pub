@@ -5,6 +5,7 @@ from typing import Dict, Any
 
 _BASE_CHANNELS = 64
 
+
 class EVFlowNet(nn.Module):
     def __init__(self, args):
         super(EVFlowNet,self).__init__()
@@ -30,6 +31,19 @@ class EVFlowNet(nn.Module):
                         out_channels=int(_BASE_CHANNELS/2), do_batch_norm=not self._args.no_batch_norm)
 
     def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        # 2フレーム分の入力を連結する
+        """
+        frame1 = inputs['frame1']  # shape: [batch_size, channels, height, width]
+        frame2 = inputs['frame2']  # shape: [batch_size, channels, height, width]
+        inputs = torch.cat([frame1, frame2], dim=1)  # shape: [batch_size, 2*channels, height, width]
+        
+        prev_frame = inputs['prev']
+        current_frame = inputs['current']
+        next_frame = inputs['next']
+        
+        combined_input = torch.cat([prev_frame, current_frame, next_frame], dim=1)  # チャネル次元で結合
+        """
+            
         # encoder
         skip_connections = {}
         inputs = self.encoder1(inputs)
@@ -62,7 +76,8 @@ class EVFlowNet(nn.Module):
         inputs, flow = self.decoder4(inputs)
         flow_dict['flow3'] = flow.clone()
 
-        return flow
+        #return flow
+        return flow_dict
         
 
 # if __name__ == "__main__":
