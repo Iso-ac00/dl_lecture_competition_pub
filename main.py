@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Dict, Any
 import os
 import time
+import torch.nn.functional as F
 
 
 class RepresentationType(Enum):
@@ -43,6 +44,17 @@ def save_optical_flow_to_npy(flow: torch.Tensor, file_name: str):
     file_name: str => ファイル名
     '''
     np.save(f"{file_name}.npy", flow.cpu().numpy())
+
+def multiscale_loss(pred_flows, ground_truth_flow):
+    scales = ['flow0', 'flow1', 'flow2', 'flow3']
+    total_loss = 0
+
+    for scale in scales:
+        pred_flow = pred_flows[scale]
+        gt_flow = F.interpolate(ground_truth_flow, size=pred_flow.shape[2:], mode='bilinear', align_corners=False)
+        total_loss += compute_epe_error(pred_flow, gt_flow)
+
+    return total_loss
 
 @hydra.main(version_base=None, config_path="configs", config_name="base")
 def main(args: DictConfig):
@@ -120,15 +132,22 @@ def main(args: DictConfig):
     #   Start training
     # ------------------
     model.train()
-    for epoch in range(args.train.epochs):
+    for epoch in range(5):   #args.train.epochs
         total_loss = 0
         print("on epoch: {}".format(epoch+1))
         for i, batch in enumerate(tqdm(train_data)):
             batch: Dict[str, Any]
+            
             event_image = batch["event_volume"].to(device) # [B, 4, 480, 640]
+            #prev_frame = batch["prev"].to(device)
+            #next_frame = batch["next"].to(device)
+            
+
             ground_truth_flow = batch["flow_gt"].to(device) # [B, 2, 480, 640]
+            #inputs={'prev': prev_frame, 'event_image': event_image, 'next': next_frame}
             flow = model(event_image) # [B, 2, 480, 640]
-            loss: torch.Tensor = compute_epe_error(flow, ground_truth_flow)
+
+            loss: torch.Tensor = multiscale_loss(flow, ground_truth_flow)
             print(f"batch {i} loss: {loss.item()}")
             optimizer.zero_grad()
             loss.backward()
@@ -156,14 +175,17 @@ def main(args: DictConfig):
         print("start test")
         for batch in tqdm(test_data):
             batch: Dict[str, Any]
-            event_image = batch["event_volume_old"].to(device)
+           
+            
+            
+            event_image = batch["event_volume"].to(device)
             batch_flow = model(event_image) # [1, 2, 480, 640]
-            flow = torch.cat((flow, batch_flow), dim=0)  # [N, 2, 480, 640]
+            flow = torch.cat((flow, batch_flow["flow3"]), dim=0)  # [N, 2, 480, 640]
         print("test done")
     # ------------------
     #  save submission
     # ------------------
-    file_name = "submission.npy"
+    file_name = "submission"
     save_optical_flow_to_npy(flow, file_name)
 
 if __name__ == "__main__":
