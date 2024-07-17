@@ -16,6 +16,10 @@ import torch.utils.data
 from torchvision.transforms import RandomCrop
 from torchvision import transforms as tf
 from torch.utils.data import Dataset
+from torchvision import transforms as T
+from torchvision import datasets, transforms, models
+from PIL import Image
+
 
 
 from src.utils import RepresentationType, VoxelGrid, flow_16bit_to_float
@@ -175,8 +179,10 @@ class EventSlicer:
 
 
 class Sequence(Dataset):
-    def __init__(self, seq_path: Path, representation_type: RepresentationType, mode: str = 'test', delta_t_ms: int = 100,
-                 num_bins: int = 4, transforms=[], name_idx=0, visualize=False, load_gt=False):
+    def __init__(self, seq_path: Path, representation_type: RepresentationType, mode: str = 'tetst', delta_t_ms: int = 100,
+                 num_bins: int = 4, 
+                 transforms=None
+                , name_idx=0, visualize=False, load_gt=False):
         assert num_bins >= 1
         assert delta_t_ms == 100
         assert seq_path.is_dir()
@@ -360,9 +366,36 @@ class Sequence(Dataset):
         return output
 
     def __getitem__(self, idx):
+        
         sample = self.get_data(idx)
+                
+        #event_volume = sample['event_volume']
+        #flow_gt = sample['flow_gt']
+       # 変換を適用する前に辞書から画像データを取り出す
+        if 'event_volume' in sample and isinstance(sample['event_volume'], (torch.Tensor, Image.Image)):
+            sample['event_volume'] = self.transforms(sample['event_volume'])
+        if 'flow_gt' in sample and isinstance(sample['flow_gt'], (torch.Tensor, Image.Image)):
+            sample['flow_gt'] = self.transforms(sample['flow_gt'])
+        
         return sample
+        """
+        sample = self.get_data(idx)
+        
+        event_volume = sample['event_volume']
+        flow_gt = sample['flow_gt']
+        
+        # 前後のフレームを取得
+        prev_event_volume = self.get_data(max(0, idx - 1))['event_volume']
+        next_event_volume = self.get_data(min(len(self) - 1, idx + 1))['event_volume']
+        
+        if self.transforms:
+            event_volume = self.transforms(event_volume)
+            #flow_gt = self.transforms(flow_gt)
+            prev_event_volume = self.transforms(prev_event_volume)
+            next_event_volume = self.transforms(next_event_volume)
 
+        return {'event_volume': event_volume, 'prev': prev_event_volume, 'next': next_event_volume, 'flow_gt': flow_gt}
+        """
     def get_voxel_grid(self, idx):
 
         if idx == 0:
@@ -537,12 +570,23 @@ class DatasetProvider:
         self.config = config
         self.name_mapper_test = []
 
+        train_transform = T.Compose([
+        T.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
+        T.RandomHorizontalFlip(p=1.0),
+        ])
+
+        test_transform = T.Compose([
+        T.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
+        ])
+
+
         # Assemble test sequences
         test_sequences = list()
         for child in test_path.iterdir():
             self.name_mapper_test.append(str(child).split("/")[-1])
             test_sequences.append(Sequence(child, representation_type, 'test', delta_t_ms, num_bins,
-                                               transforms=[],
+                                               transforms=test_transform,
+                                            
                                                name_idx=len(
                                                    self.name_mapper_test)-1,
                                                visualize=visualize))
@@ -559,6 +603,7 @@ class DatasetProvider:
             extra_arg = dict()
             train_sequences.append(Sequence(Path(train_path) / seq,
                                    representation_type=representation_type, mode="train",
+                                   transforms=train_transform,
                                    load_gt=True, **extra_arg))
             self.train_dataset: torch.utils.data.ConcatDataset[Sequence] = torch.utils.data.ConcatDataset(train_sequences)
 
